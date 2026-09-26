@@ -152,4 +152,4 @@ for your zone:
 The commands set the DST/STD rules; Tasmota derives the correct offset from
 them automatically. The NTP servers are baked into every build, so you only
 need them if your device does not sync time at all (`NtpServer1
-pool.ntp.org`).
+1.na.pool.ntp.org`).

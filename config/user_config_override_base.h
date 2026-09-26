@@ -28,21 +28,23 @@
 #define USE_PROMETHEUS          // Enable /metrics HTTP endpoint for Prometheus scraping
 #endif
 
-// -- Time - NTP servers -----------------------------------------------
+// -- Time - NTP servers (North America centric) ------------------------
+// pool.ntp.org resolves via DNS to a server near the device; the "na"/
+// "us" pools narrow that to North America / the United States.
 #ifdef NTP_SERVER1
 #undef NTP_SERVER1
 #endif
-#define NTP_SERVER1              "pool.ntp.org"
+#define NTP_SERVER1              "1.na.pool.ntp.org"
 
 #ifdef NTP_SERVER2
 #undef NTP_SERVER2
 #endif
-#define NTP_SERVER2              "time.google.com"
+#define NTP_SERVER2              "1.us.pool.ntp.org"
 
 #ifdef NTP_SERVER3
 #undef NTP_SERVER3
 #endif
-#define NTP_SERVER3              "time.cloudflare.com"
+#define NTP_SERVER3              "time.google.com"
 
 // -- Time - US DST rules (identical for all four US time zones) --------
 // 99 = derive the UTC offset from the TIME_DST/TIME_STD rules below
