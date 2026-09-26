@@ -1,0 +1,150 @@
+name: Track Tasmota releases and build Prometheus-enabled firmware
+
+on:
+  schedule:
+    # Check for a new upstream Tasmota release every 6 hours.
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      build_envs:
+        description: 'Comma-separated PlatformIO envs to build (leave blank for the default set)'
+        required: false
+        default: ''
+      force_rebuild:
+        description: 'Rebuild even if a release for the latest upstream tag already exists (uploads/overwrites assets on it)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tasmota-prometheus-build
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: arendst/Tasmota
+  # Comma-separated list of PlatformIO environments to build.
+  # Add/remove envs from tasmota/platformio.ini as needed
+  # (e.g. tasmota,tasmota32,tasmota-sensors,tasmota32-sensors).
+  # tasmota-minimal / tasmota32-minimal are the stripped-down builds meant
+  # for flash-constrained boards (build_flags -DFIRMWARE_MINIMAL) - they're
+  # small enough to flash directly, then OTA up to a full build afterward.
+  #
+  # Default set used for scheduled runs, and for manual runs where the
+  # build_envs input is left blank. To build just the minimal envs for a
+  # one-off manual run, trigger this workflow from the Actions tab and
+  # enter e.g. "tasmota-minimal,tasmota32-minimal" in the build_envs input.
+  BUILD_ENVS: ${{ github.event.inputs.build_envs != '' && github.event.inputs.build_envs || 'tasmota,tasmota32,tasmota-minimal,tasmota32-minimal' }}
+  # PlatformIO Core 6.2.0 has an open regression where pioarduino-based
+  # platforms get their tool-scons package wiped mid-build, causing:
+  #   ModuleNotFoundError: No module named 'SCons.Tool.FortranCommon'
+  # See: https://github.com/pioarduino/platform-espressif32/issues/529
+  # Pinning to the last known-good release until that's fixed upstream.
+  PLATFORMIO_VERSION: "6.1.19"
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get latest upstream release tag
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest=$(gh api "repos/${UPSTREAM_REPO}/releases/latest" --jq '.tag_name')
+          echo "Latest upstream Tasmota release: $latest"
+          echo "tag=$latest" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether this tag was already built
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "${{ steps.upstream.outputs.tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            if [ "${{ github.event.inputs.force_rebuild }}" = "true" ]; then
+              echo "Release ${{ steps.upstream.outputs.tag }} exists, but force_rebuild=true - rebuilding anyway."
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+              echo "release_exists=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "Already built ${{ steps.upstream.outputs.tag }}, nothing to do."
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              echo "release_exists=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "New release detected: ${{ steps.upstream.outputs.tag }}"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout this repo (for override config)
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/checkout@v4
+        with:
+          path: builder
+
+      - name: Checkout Tasmota at upstream tag
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ steps.upstream.outputs.tag }}
+          path: tasmota
+
+      - name: Apply Prometheus override config
+        if: steps.check.outputs.exists == 'false'
+        run: cp builder/config/user_config_override.h tasmota/tasmota/user_config_override.h
+
+      - name: Set up Python
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        if: steps.check.outputs.exists == 'false'
+        run: pip install "platformio==${PLATFORMIO_VERSION}"
+
+      - name: Build firmware
+        if: steps.check.outputs.exists == 'false'
+        working-directory: tasmota
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra ENVS <<< "${BUILD_ENVS}"
+          for e in "${ENVS[@]}"; do
+            echo "::group::Building $e"
+            pio run -e "$e"
+            echo "::endgroup::"
+          done
+
+      - name: Collect binaries
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          find tasmota/build_output/firmware -type f \( -name '*.bin' -o -name '*.bin.gz' \) -exec cp {} out/ \;
+          ls -la out
+
+      - name: Create matching release with Prometheus-enabled binaries
+        if: steps.check.outputs.exists == 'false' && steps.check.outputs.release_exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.upstream.outputs.tag }}" out/* \
+            --repo "${{ github.repository }}" \
+            --title "Tasmota ${{ steps.upstream.outputs.tag }} + Prometheus" \
+            --notes "Unofficial rebuild of [Tasmota ${{ steps.upstream.outputs.tag }}](https://github.com/${{ env.UPSTREAM_REPO }}/releases/tag/${{ steps.upstream.outputs.tag }}) with \`USE_PROMETHEUS\` enabled (adds the \`/metrics\` HTTP endpoint). Everything else matches the stock release. Built environments: ${BUILD_ENVS}."
+
+      - name: Upload/overwrite binaries on an existing release (force_rebuild)
+        if: steps.check.outputs.exists == 'false' && steps.check.outputs.release_exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ steps.upstream.outputs.tag }}" out/* \
+            --repo "${{ github.repository }}" \
+            --clobber
