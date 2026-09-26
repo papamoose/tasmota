@@ -2,8 +2,8 @@ name: Track Tasmota releases and build Prometheus-enabled firmware
 
 on:
   schedule:
-    # Check for a new upstream Tasmota release every 6 hours.
-    - cron: '0 */6 * * *'
+    # Check for a new upstream Tasmota release once a day.
+    - cron: '0 6 * * *'
   workflow_dispatch:
     inputs:
       build_envs:
@@ -25,18 +25,15 @@ concurrency:
 
 env:
   UPSTREAM_REPO: arendst/Tasmota
-  # Comma-separated list of PlatformIO environments to build.
-  # Add/remove envs from tasmota/platformio.ini as needed
-  # (e.g. tasmota,tasmota32,tasmota-sensors,tasmota32-sensors).
-  # tasmota-minimal / tasmota32-minimal are the stripped-down builds meant
-  # for flash-constrained boards (build_flags -DFIRMWARE_MINIMAL) - they're
-  # small enough to flash directly, then OTA up to a full build afterward.
+  # Comma-separated list of PlatformIO environments to build, once per
+  # time zone. Add/remove envs from tasmota/platformio.ini as needed.
+  # tasmota-minimal is the stripped-down build (build_flags
+  # -DFIRMWARE_MINIMAL) for flash-constrained boards - small enough to
+  # flash directly, then OTA up to a full build afterward.
   #
   # Default set used for scheduled runs, and for manual runs where the
-  # build_envs input is left blank. To build just the minimal envs for a
-  # one-off manual run, trigger this workflow from the Actions tab and
-  # enter e.g. "tasmota-minimal,tasmota32-minimal" in the build_envs input.
-  BUILD_ENVS: ${{ github.event.inputs.build_envs != '' && github.event.inputs.build_envs || 'tasmota,tasmota32,tasmota-minimal,tasmota32-minimal' }}
+  # build_envs input is left blank.
+  BUILD_ENVS: ${{ github.event.inputs.build_envs != '' && github.event.inputs.build_envs || 'tasmota,tasmota-minimal' }}
   # PlatformIO Core 6.2.0 has an open regression where pioarduino-based
   # platforms get their tool-scons package wiped mid-build, causing:
   #   ModuleNotFoundError: No module named 'SCons.Tool.FortranCommon'
@@ -45,8 +42,12 @@ env:
   PLATFORMIO_VERSION: "6.1.19"
 
 jobs:
-  check-and-build:
+  check:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.upstream.outputs.tag }}
+      rebuild_needed: ${{ steps.check.outputs.rebuild_needed }}
+      release_exists: ${{ steps.check.outputs.release_exists }}
     steps:
       - name: Get latest upstream release tag
         id: upstream
@@ -67,84 +68,106 @@ jobs:
           if gh release view "${{ steps.upstream.outputs.tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             if [ "${{ github.event.inputs.force_rebuild }}" = "true" ]; then
               echo "Release ${{ steps.upstream.outputs.tag }} exists, but force_rebuild=true - rebuilding anyway."
-              echo "exists=false" >> "$GITHUB_OUTPUT"
-              echo "release_exists=true" >> "$GITHUB_OUTPUT"
+              echo "rebuild_needed=true" >> "$GITHUB_OUTPUT"
             else
               echo "Already built ${{ steps.upstream.outputs.tag }}, nothing to do."
-              echo "exists=true" >> "$GITHUB_OUTPUT"
-              echo "release_exists=true" >> "$GITHUB_OUTPUT"
+              echo "rebuild_needed=false" >> "$GITHUB_OUTPUT"
             fi
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "New release detected: ${{ steps.upstream.outputs.tag }}"
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "rebuild_needed=true" >> "$GITHUB_OUTPUT"
             echo "release_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+  create-release:
+    needs: check
+    if: needs.check.outputs.rebuild_needed == 'true' && needs.check.outputs.release_exists == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create release (the build jobs upload the binaries)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ needs.check.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --title "Tasmota ${{ needs.check.outputs.tag }} + Prometheus" \
+            --notes "Unofficial rebuild of [Tasmota ${{ needs.check.outputs.tag }}](https://github.com/${{ env.UPSTREAM_REPO }}/releases/tag/${{ needs.check.outputs.tag }}) with \`USE_PROMETHEUS\` enabled (adds the \`/metrics\` HTTP endpoint). Each environment is built once per US time zone - Eastern, Central, Mountain, Pacific - with that zone's NTP, timezone, and DST defaults baked in. Binaries are labeled with the zone name (e.g. \`tasmota-eastern.bin\`); the zone only changes the time defaults. Built environments: ${BUILD_ENVS}."
+
+  build:
+    needs: [check, create-release]
+    if: needs.check.outputs.rebuild_needed == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # One job per US time zone. Each job builds every env from
+        # BUILD_ENVS with that zone's override
+        # (config/user_config_override_<zone>.h) and labels the output
+        # binaries with the zone name (e.g. tasmota-eastern.bin).
+        zone: [eastern, central, mountain, pacific]
+    steps:
       - name: Checkout this repo (for override config)
-        if: steps.check.outputs.exists == 'false'
         uses: actions/checkout@v4
         with:
           path: builder
 
       - name: Checkout Tasmota at upstream tag
-        if: steps.check.outputs.exists == 'false'
         uses: actions/checkout@v4
         with:
           repository: ${{ env.UPSTREAM_REPO }}
-          ref: ${{ steps.upstream.outputs.tag }}
+          ref: ${{ needs.check.outputs.tag }}
           path: tasmota
 
-      - name: Apply Prometheus override config
-        if: steps.check.outputs.exists == 'false'
-        run: cp builder/config/user_config_override.h tasmota/tasmota/user_config_override.h
+      - name: Apply Prometheus + timezone override config
+        run: |
+          set -euo pipefail
+          cp builder/config/user_config_override_base.h tasmota/tasmota/user_config_override_base.h
+          cp builder/config/user_config_override_${{ matrix.zone }}.h tasmota/tasmota/user_config_override.h
 
       - name: Set up Python
-        if: steps.check.outputs.exists == 'false'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install PlatformIO
-        if: steps.check.outputs.exists == 'false'
         run: pip install "platformio==${PLATFORMIO_VERSION}"
 
       - name: Build firmware
-        if: steps.check.outputs.exists == 'false'
         working-directory: tasmota
         run: |
           set -euo pipefail
           IFS=',' read -ra ENVS <<< "${BUILD_ENVS}"
           for e in "${ENVS[@]}"; do
-            echo "::group::Building $e"
+            echo "::group::Building $e (${{ matrix.zone }})"
             pio run -e "$e"
             echo "::endgroup::"
           done
 
-      - name: Collect binaries
-        if: steps.check.outputs.exists == 'false'
+      - name: Collect and label binaries
         run: |
           set -euo pipefail
+          Z="${{ matrix.zone }}"
           mkdir -p out
-          find tasmota/build_output/firmware -type f \( -name '*.bin' -o -name '*.bin.gz' \) -exec cp {} out/ \;
+          IFS=',' read -ra ENVS <<< "${BUILD_ENVS}"
+          for e in "${ENVS[@]}"; do
+            for f in "tasmota/build_output/firmware/$e.bin" "tasmota/build_output/firmware/$e.bin.gz"; do
+              if [ -f "$f" ]; then
+                case "$f" in
+                  *.gz) cp "$f" "out/${e}-${Z}.bin.gz" ;;
+                  *)    cp "$f" "out/${e}-${Z}.bin" ;;
+                esac
+              fi
+            done
+          done
           ls -la out
 
-      - name: Create matching release with Prometheus-enabled binaries
-        if: steps.check.outputs.exists == 'false' && steps.check.outputs.release_exists == 'false'
+      - name: Upload binaries to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create "${{ steps.upstream.outputs.tag }}" out/* \
-            --repo "${{ github.repository }}" \
-            --title "Tasmota ${{ steps.upstream.outputs.tag }} + Prometheus" \
-            --notes "Unofficial rebuild of [Tasmota ${{ steps.upstream.outputs.tag }}](https://github.com/${{ env.UPSTREAM_REPO }}/releases/tag/${{ steps.upstream.outputs.tag }}) with \`USE_PROMETHEUS\` enabled (adds the \`/metrics\` HTTP endpoint). Everything else matches the stock release. Built environments: ${BUILD_ENVS}."
-
-      - name: Upload/overwrite binaries on an existing release (force_rebuild)
-        if: steps.check.outputs.exists == 'false' && steps.check.outputs.release_exists == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh release upload "${{ steps.upstream.outputs.tag }}" out/* \
+          gh release upload "${{ needs.check.outputs.tag }}" out/* \
             --repo "${{ github.repository }}" \
             --clobber
