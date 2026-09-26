@@ -27,16 +27,16 @@ env:
   UPSTREAM_REPO: arendst/Tasmota
   # Comma-separated list of PlatformIO environments to build.
   # Add/remove envs from tasmota/platformio.ini as needed
-  # (e.g. tasmota,tasmota32,tasmota-sensors,tasmota32-sensors).
-  # tasmota-minimal / tasmota32-minimal are the stripped-down builds meant
-  # for flash-constrained boards (build_flags -DFIRMWARE_MINIMAL) - they're
-  # small enough to flash directly, then OTA up to a full build afterward.
+  # (e.g. tasmota,tasmota-minimal,tasmota-sensors).
+  # tasmota-minimal is the stripped-down build for flash-constrained
+  # boards (build_flags -DFIRMWARE_MINIMAL) - small enough to flash directly,
+  # then OTA up to a full build afterward.
   #
   # Default set used for scheduled runs, and for manual runs where the
-  # build_envs input is left blank. To build just the minimal envs for a
+  # build_envs input is left blank. To build just the minimal env for a
   # one-off manual run, trigger this workflow from the Actions tab and
-  # enter e.g. "tasmota-minimal,tasmota32-minimal" in the build_envs input.
-  BUILD_ENVS: ${{ github.event.inputs.build_envs != '' && github.event.inputs.build_envs || 'tasmota,tasmota32,tasmota-minimal,tasmota32-minimal' }}
+  # enter "tasmota-minimal" in the build_envs input.
+  BUILD_ENVS: ${{ github.event.inputs.build_envs != '' && github.event.inputs.build_envs || 'tasmota,tasmota-minimal' }}
   # PlatformIO Core 6.2.0 has an open regression where pioarduino-based
   # platforms get their tool-scons package wiped mid-build, causing:
   #   ModuleNotFoundError: No module named 'SCons.Tool.FortranCommon'

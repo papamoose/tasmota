@@ -26,28 +26,26 @@ Prometheus baked in.
 **Locally**, from inside a Tasmota checkout with the override applied:
 
 ```bash
-pio run -e tasmota-minimal        # ESP8266
-pio run -e tasmota32-minimal      # ESP32
+pio run -e tasmota-minimal
 ```
 
 **Via this repo's workflow**, without editing any files: go to **Actions →
 Track Tasmota releases... → Run workflow**, and fill in:
 
-- `build_envs`: `tasmota-minimal,tasmota32-minimal` (overrides the default
-  list for just that run)
+- `build_envs`: `tasmota-minimal` (overrides the default list for just
+  that run)
 - `force_rebuild`: check this if a release for the current upstream tag
   already exists and you want to add/replace these binaries on it, rather
   than being skipped because "this tag is already built."
 
-Leaving `build_envs` blank uses the default set
-(`tasmota,tasmota32,tasmota-minimal,tasmota32-minimal`).
+Leaving `build_envs` blank uses the default set (`tasmota,tasmota-minimal`).
 
 ## Customizing
 
 - **Which boards/envs to build** — edit `BUILD_ENVS` in the workflow (a
   comma-separated list of PlatformIO environment names from Tasmota's
-  `platformio.ini`, e.g. `tasmota,tasmota32,tasmota-sensors`). Defaults to
-  `tasmota,tasmota32,tasmota-minimal,tasmota32-minimal`.
+  `platformio.ini`, e.g. `tasmota,tasmota-minimal,tasmota-sensors`). Defaults
+  to `tasmota,tasmota-minimal`.
 - **Other firmware settings** (WiFi, MQTT, extra sensors, etc.) — add more
   `#define`s to `config/user_config_override.h`.
 - **Check frequency** — edit the `cron` schedule in the workflow.
@@ -56,9 +54,8 @@ Leaving `build_envs` blank uses the default set
 
 PlatformIO Core `6.2.0` has an open regression
 ([pioarduino/platform-espressif32#529](https://github.com/pioarduino/platform-espressif32/issues/529))
-where pioarduino-based platforms (which Tasmota's ESP8266/ESP32 platforms
-are) get their `tool-scons` package wiped mid-build due to a version-mismatch
-check, producing:
+where pioarduino-based platforms (Tasmota's ESP32 platforms) get their
+`tool-scons` package wiped mid-build due to a version-mismatch check, producing:
 
 ```
 ModuleNotFoundError: No module named 'SCons.Tool.FortranCommon'
@@ -76,12 +73,12 @@ this. Bump it once upstream ships a fix.
 
 On flash-constrained boards (e.g. 1MB ESP8266 modules), the full `tasmota`
 build may not leave room for every driver once Prometheus is added. Each
-release also includes `tasmota-minimal.bin` / `tasmota32-minimal.bin` — small
-stripped-down builds meant as a two-step path for tight-flash devices:
+release also includes `tasmota-minimal.bin` — a small stripped-down build
+meant as a two-step path for tight-flash devices:
 
 1. Flash the `-minimal` build first (small enough to fit directly).
 2. From that device's web UI → **Firmware Upgrade**, OTA it up to the full
-   `tasmota` / `tasmota32` build from the same release.
+   `tasmota` build from the same release.
 
 If even the full build is too big for your specific board's flash, add a
 lighter env like `tasmota-lite` to `BUILD_ENVS` in the workflow instead.
