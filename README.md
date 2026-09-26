@@ -97,7 +97,9 @@ this. Bump it once upstream ships a fix.
 - **New device**: flash a `.bin` over USB with `esptool.py` or the Tasmota
   web installer.
 - **Existing Tasmota device**: use the device's web UI → **Firmware Upgrade**
-  → upload the matching `.bin` (OTA).
+  → upload the matching `.bin` (OTA). Note: OTA does not re-apply the
+  baked-in time defaults - the device keeps its current Timezone/NTP/
+  location settings (see **Important** below).
 
 Every binary is labeled with its zone (`tasmota-eastern.bin`,
 `tasmota-central.bin`, `tasmota-mountain.bin`, `tasmota-pacific.bin`). The
@@ -135,9 +137,19 @@ compiled-in defaults when:
 
 On a device you already have running, OTA-updating to a build from this repo
 will **not** silently overwrite your existing Timezone/NTP/location settings
-— your device keeps whatever it's currently configured with. If you want to
-push these new defaults onto an already-configured device, set them manually
-via Console (`Backlog Timezone 99; TimeStd 0,1,11,1,2,-420; TimeDst
-0,2,3,1,2,-360; NtpServer1 pool.ntp.org` — Mountain Time; use the
-`Backlog` line from your zone's config file header for its values) or do a
-config reset.
+— your device keeps whatever it's currently configured with. To apply the
+baked-in defaults on such a device, either do a factory reset (`Reset 1` in
+Console, then re-enter your WiFi/MQTT settings) or run the Console command
+for your zone:
+
+| Zone | Console command |
+| --- | --- |
+| Eastern (America/New_York) | `Backlog Timezone 99; TimeStd 0,1,11,1,2,-300; TimeDst 0,2,3,1,2,-240` |
+| Central (America/Chicago) | `Backlog Timezone 99; TimeStd 0,1,11,1,2,-360; TimeDst 0,2,3,1,2,-300` |
+| Mountain (America/Denver) | `Backlog Timezone 99; TimeStd 0,1,11,1,2,-420; TimeDst 0,2,3,1,2,-360` |
+| Pacific (America/Los_Angeles) | `Backlog Timezone 99; TimeStd 0,1,11,1,2,-480; TimeDst 0,2,3,1,2,-420` |
+
+The commands set the DST/STD rules; Tasmota derives the correct offset from
+them automatically. The NTP servers are baked into every build, so you only
+need them if your device does not sync time at all (`NtpServer1
+pool.ntp.org`).
