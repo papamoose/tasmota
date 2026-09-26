@@ -114,12 +114,12 @@ jobs:
         zone: [eastern, central, mountain, pacific]
     steps:
       - name: Checkout this repo (for override config)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: builder
 
       - name: Checkout Tasmota at upstream tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ env.UPSTREAM_REPO }}
           ref: ${{ needs.check.outputs.tag }}
@@ -132,7 +132,7 @@ jobs:
           cp builder/config/user_config_override_${{ matrix.zone }}.h tasmota/tasmota/user_config_override.h
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
