@@ -97,7 +97,12 @@ jobs:
 
   build:
     needs: [check, create-release]
-    if: needs.check.outputs.rebuild_needed == 'true'
+    # !cancelled() lifts the implicit success() gate: without a status
+    # function here, a skipped create-release (existing release +
+    # force_rebuild) would skip this job before the if is evaluated.
+    # Run when check succeeded, a rebuild is needed, and create-release
+    # either made a new release or was correctly skipped.
+    if: ${{ !cancelled() && needs.check.result == 'success' && needs.check.outputs.rebuild_needed == 'true' && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
